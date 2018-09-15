@@ -1,0 +1,265 @@
+<html><head>
+  <title>Test</title>
+<style class="cp-pen-styles">
+html, body {
+  min-height: 100%;
+}
+
+body {
+  background-color: #ececec;
+  background:linear-gradient(135deg, #0f55e4, #0a3a9c);
+  color: #fff;
+}
+
+.console {
+  position: fixed;
+  font-family: monospace,monospace;
+  color: #fff;
+  width: calc(100% - 3em);
+  min-height: calc(100% - 3em);
+  max-width: 100%;
+  max-height: calc(100% - 3em);
+  overflow-y: auto;
+  margin: 1em 1em;
+  padding-top: 0.5em;
+  padding-bottom: 0.5em;
+  background: rgba(0, 0, 0, 0.5);
+  border-radius: 0.5em;
+  z-index: 100;
+  line-height: 1.5;
+}
+
+.console-input {
+  font-family: monospace,monospace;
+  background-color: transparent;
+  border: none;
+  outline: none;
+  color: #fff;
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+  min-width: calc(100% - 2em);
+  resize: none;
+}
+
+.console-input:before {
+  content: '> ';
+  color: #FC3565;
+  vertical-align: top;
+}
+
+.output-text,
+.output-cmd {
+  width: 100%;
+  display: block;
+}
+
+.console-inner {
+  padding: 0.3em 1.1em;
+}
+
+
+</style>
+<script src='https://cdnjs.cloudflare.com/ajax/libs/jquery/2.2.2/jquery.min.js'></script>
+</head>
+<body>
+<div class='console'>
+  <div class='buttonbar'><button onclick="doConnect()">Connect</button></div>
+  <div class='console-inner'>
+    <pre id="outputs">Test
+    line2
+    line3
+    </pre>
+  </div>
+  <div class='output-cmd'><textarea autofocus class='console-input' placeholder="Type command..."></textarea></div>
+</div>
+<script>
+/*
+* UART Serivce: 6E400001-B5A3-F393-E0A9-E50E24DCCA9E
+ * UART RXD    : 6E400002-B5A3-F393-E0A9-E50E24DCCA9E
+ * UART TXD    : 6E400003-B5A3-F393-E0A9-E50E24DCCA9E
+ uart serivce: 6e400001-b5a3-f393-e0a9-e50e24dcca9e
+ * uart rxd    : 6e400002-b5a3-f393-e0a9-e50e24dcca9e
+ * uart txd    : 6e400003-b5a3-f393-e0a9-e50e24dcca9e
+
+*/
+
+var gService;
+var gRxChar;
+
+function bin2str(data) {
+  var result = "";
+  for (var i = 0; i != data.byteLength; i++) {
+    var code = data.getUint8(i);
+    if (code == 0) break;
+    result += String.fromCharCode(code);
+  }
+  return result;
+}
+
+function str2bin(str) {
+  var ret = new Uint8Array(str.length);
+  for (var i = 0; i != str.length; i++) {
+    ret[i] = str.charCodeAt(i);
+  }
+console.log(' str2bin len=' + ret.length);
+  return ret;
+}
+
+function handleRX(event) {
+  var value = event.target.value;
+  var str = bin2str(value);
+  console.log('Received "' + str + "'");
+  output(str+"\n");
+}
+
+function handleTX(str) {
+  console.log('Sending "' + str + "', rx char=" + gRxChar);
+  var msg = str2bin(str);
+console.log('created array of ' + msg[0] + ',' + msg[1]);
+
+    return gRxChar.writeValue(msg);
+}
+
+function doConnect() {
+  console.log("Connecting");
+  navigator.bluetooth.requestDevice({ filters: [{ services: ['6e400001-b5a3-f393-e0a9-e50e24dcca9e'] }] })
+  //navigator.bluetooth.requestDevice({ acceptAllDevices: true })
+//    .then(device => { console.log("Device=" + device); })
+    .then(device => device.gatt.connect())
+    .then(server => server.getPrimaryService('6e400001-b5a3-f393-e0a9-e50e24dcca9e'))
+    .then(service => {
+        gService = service;
+        console.log("service=" + gService);
+        tx_char = service.getCharacteristic('6e400003-b5a3-f393-e0a9-e50e24dcca9e');
+        console.log('tx_char = ' + tx_char);
+        return tx_char; })
+    .then( tx_char => {
+        console.log('tx_char2 = ' + tx_char);
+        return tx_char.startNotifications(); } )
+    .then(tx_char => {
+        tx_char.addEventListener('characteristicvaluechanged', handleRX);
+        return gService; })
+    .then(service => service.getCharacteristic('6e400002-b5a3-f393-e0a9-e50e24dcca9e'))
+    .then(rx_char => {
+        gRxChar = rx_char;
+        var msg = new Uint8Array([ 0x3F, 0x54 ]);
+        console.log('created array of ' + msg[0] + ',' + msg[1]);
+        console.log(' len=' + msg.length);
+        
+        return rx_char.writeValue(msg); })
+    .then(_ => {
+        console.log('Message sent.');
+     })
+    .catch (error => { console.log("Error: " + error); });
+}
+
+// Output Welcome message
+output('Output:\n');
+
+// User Commands
+function echo(...a) {
+  return a.join(' ');
+}
+echo.usage = "echo arg [arg ...]";
+echo.doc = "Echos to output whatever arguments are input";
+
+var cmds = {
+  echo,
+  clear,
+  help
+
+
+  /*
+        * * * * * * * * USER INTERFACE * * * * * * *
+        */ };
+
+function clear() {
+  $("#outputs").html("");
+}
+clear.usage = "clear";
+clear.doc = "Clears the terminal screen";
+
+function help(cmd) {
+  if (cmd) {
+    let result = "";
+    let usage = cmds[cmd].usage;
+    let doc = cmds[cmd].doc;
+    result += typeof usage === 'function' ? usage() : usage;
+    result += "\n";
+    result += typeof doc === 'function' ? doc() : doc;
+    return result;
+  } else {
+    let result = "**Commands:**\n\n";
+    print = Object.keys(cmds);
+    for (let p of print) {
+      result += "- " + p + "\n";
+    }
+    return result;
+  }
+}
+help.usage = () => "help [command]";
+help.doc = () => "Without an argument, lists available commands. If used with an argument displays the usage & docs for the command.";
+
+// Set Focus to Input
+$('.console').click(function () {
+  $('.console-input').focus();
+});
+
+// Display input to Console
+function input() {
+  var cmd = $('.console-input').val();
+  $("#outputs").append("<div class='output-cmd'>=> " + cmd + "</div>");
+  $('.console-input').val("");
+//  autosize.update($('textarea'));
+  $("html, body").animate({
+    scrollTop: $(document).height() },
+  300);
+  return cmd;
+}
+
+// Output to Console
+function output(print) {
+    var pane = document.getElementById("outputs");
+console.log("pane=" + pane);
+    pane.append(print);
+}
+
+// Break Value
+var newLine = "<br/> &nbsp;";
+
+//autosize($('textarea'));
+
+var cmdHistory = [];
+var cursor = -1;
+
+// Get User Command
+$('.console-input').on('keydown', function (event) {
+  if (event.which === 38) {
+    // Up Arrow
+    cursor = Math.min(++cursor, cmdHistory.length - 1);
+    $('.console-input').val(cmdHistory[cursor]);
+  } else if (event.which === 40) {
+    // Down Arrow
+    cursor = Math.max(--cursor, -1);
+    if (cursor === -1) {
+      $('.console-input').val('');
+    } else {
+      $('.console-input').val(cmdHistory[cursor]);
+    }
+  } else if (event.which === 13) {
+    event.preventDefault();
+    cursor = -1;
+    let text = input();
+//    cmdHistory.unshift(text);
+//    output('=> ' + text + '\n');
+// process it
+    handleTX(text);
+  }
+});
+
+</script>
+</body>
